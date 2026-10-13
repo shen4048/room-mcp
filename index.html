@@ -1,0 +1,190 @@
+
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#f7f7f5">
+<title>Room</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#f7f7f5;color:#252523;font-family:-apple-system,BlinkMacSystemFont,sans-serif}
+button,input,textarea{font:inherit}
+.app{height:100dvh;max-width:760px;margin:auto;display:flex;flex-direction:column}
+header{padding:16px 18px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #e7e7e1}
+h1{font-size:17px;margin:0}
+#status{font-size:11px;color:#898981;margin-top:4px}
+button{cursor:pointer}
+#settings{border:1px solid #e7e7e1;background:white;border-radius:12px;padding:10px 13px}
+#messages{flex:1;overflow:auto;padding:20px 14px;overscroll-behavior:contain}
+.msg{max-width:86%;margin-bottom:17px;display:flex;flex-direction:column;align-items:flex-start}
+.msg.mine{margin-left:auto;align-items:flex-end}
+.meta{font-size:11px;color:#898981;margin:0 4px 6px}
+.bubble{background:white;border:1px solid #e7e7e1;border-radius:4px 15px 15px 15px;padding:10px 13px;white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.55;font-size:14px}
+.mine .bubble{background:#252523;color:white;border-color:#252523;border-radius:15px 4px 15px 15px}
+#empty{text-align:center;color:#92928b;font-size:13px;padding-top:30vh}
+footer{padding:12px 12px calc(12px + env(safe-area-inset-bottom));border-top:1px solid #e7e7e1;background:#fbfbf9}
+form{display:flex;gap:9px;align-items:flex-end;padding:8px 8px 8px 13px;border:1px solid #e7e7e1;border-radius:17px;background:white}
+textarea{flex:1;min-width:0;resize:none;border:0;outline:0;background:transparent;max-height:120px;min-height:28px;padding:5px 0;font-size:14px;line-height:1.45}
+#send{width:38px;height:36px;border:0;border-radius:12px;background:#252523;color:white;font-size:20px}
+.hint{text-align:center;font-size:10px;color:#a2a29b;margin-top:8px}
+.overlay{display:none;position:fixed;inset:0;background:#0005;align-items:flex-end;justify-content:center;padding:12px 12px calc(12px + env(safe-area-inset-bottom))}
+.overlay.open{display:flex}
+.sheet{width:100%;max-width:460px;background:white;border-radius:20px;padding:20px}
+.sheet h2{font-size:17px;margin:0 0 18px}
+label{display:block;font-size:12px;color:#777;margin:13px 0}
+input{display:block;width:100%;padding:12px;border:1px solid #e7e7e1;border-radius:11px;margin-top:7px}
+#save{width:100%;border:0;border-radius:11px;padding:13px;background:#252523;color:white}
+.note{font-size:11px;line-height:1.5;color:#92928b;margin-top:12px}
+#toast{display:none;position:fixed;bottom:100px;left:50%;transform:translateX(-50%);background:#252523;color:white;padding:10px 14px;border-radius:10px;font-size:12px;max-width:90%}
+@media(min-width:600px){body{padding:20px}.app{height:calc(100dvh - 40px);border:1px solid #e7e7e1;border-radius:18px;overflow:hidden}.overlay{align-items:center}}
+</style>
+</head>
+<body>
+<div class="app">
+<header>
+  <div><h1>Room</h1><div id="status">共享房间 · 正在连接</div></div>
+  <button id="settings">设置</button>
+</header>
+<main id="messages">
+  <div id="empty">这里暂时很安静<br><br>发出第一条消息吧。</div>
+</main>
+<footer>
+  <form id="form">
+    <textarea id="text" rows="1" maxlength="2000" placeholder="写一条消息……"></textarea>
+    <button id="send" type="submit">↑</button>
+  </form>
+  <div class="hint">Enter 发送 · Shift + Enter 换行</div>
+</footer>
+</div>
+
+<div class="overlay" id="overlay">
+  <section class="sheet">
+    <h2>聊天设置</h2>
+    <label>你的昵称<input id="name" maxlength="20" placeholder="例如：困困"></label>
+    <label>房间钥匙<input id="key" type="password" placeholder="没有设置则留空"></label>
+    <button id="save">保存</button>
+    <div class="note">设置保存在当前设备的浏览器中。</div>
+  </section>
+</div>
+<div id="toast"></div>
+
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  let name = localStorage.getItem('room.name') || '';
+  let key = localStorage.getItem('room.key') || '';
+  let lastId = 0;
+  const seen = new Set();
+
+  $('name').value = name;
+  $('key').value = key;
+
+  function toast(s) {
+    $('toast').textContent = s;
+    $('toast').style.display = 'block';
+    setTimeout(() => $('toast').style.display = 'none', 2500);
+  }
+
+  function render(m) {
+    if (seen.has(m.id)) return;
+    seen.add(m.id);
+    lastId = Math.max(lastId, Number(m.id) || 0);
+    $('empty').style.display = 'none';
+
+    const item = document.createElement('div');
+    item.className = 'msg' + (name && m.name === name ? ' mine' : '');
+
+    const meta = document.createElement('div');
+    meta.className = 'meta';
+    meta.textContent = `${m.name || '匿名'} · ${
+      new Date(Number(m.t) * 1000).toLocaleTimeString([], {
+        hour:'2-digit', minute:'2-digit'
+      })
+    }`;
+
+    const bubble = document.createElement('div');
+    bubble.className = 'bubble';
+    bubble.textContent = m.text || '';
+
+    item.append(meta, bubble);
+    $('messages').appendChild(item);
+    $('messages').scrollTop = $('messages').scrollHeight;
+  }
+
+  async function poll(initial = false) {
+    try {
+      const res = await fetch(
+        '/api/messages?after_id=' + (initial ? 0 : lastId),
+        {cache:'no-store'}
+      );
+      if (!res.ok) throw new Error();
+      const data = await res.json();
+      (data.messages || []).forEach(render);
+      $('status').textContent = '共享房间 · 已连接';
+    } catch {
+      $('status').textContent = '连接中断 · 正在重试';
+    }
+  }
+
+  $('settings').onclick = () => $('overlay').classList.add('open');
+  $('overlay').onclick = e => {
+    if (e.target === $('overlay')) $('overlay').classList.remove('open');
+  };
+
+  $('save').onclick = () => {
+    name = $('name').value.trim().slice(0,20);
+    key = $('key').value;
+    localStorage.setItem('room.name', name);
+    localStorage.setItem('room.key', key);
+    $('overlay').classList.remove('open');
+    toast('设置已保存');
+  };
+
+  $('text').addEventListener('input', () => {
+    $('text').style.height = 'auto';
+    $('text').style.height = Math.min($('text').scrollHeight,120) + 'px';
+  });
+
+  $('text').addEventListener('keydown', e => {
+    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+      e.preventDefault();
+      $('form').requestSubmit();
+    }
+  });
+
+  $('form').onsubmit = async e => {
+    e.preventDefault();
+    const message = $('text').value.trim();
+    if (!message) return;
+    if (!name) {
+      $('overlay').classList.add('open');
+      toast('先设置昵称');
+      return;
+    }
+
+    $('send').disabled = true;
+    try {
+      const res = await fetch('/api/send', {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({name,key,text:message})
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || '发送失败');
+      $('text').value = '';
+      $('text').style.height = 'auto';
+      if (data.message) render(data.message);
+    } catch (err) {
+      toast(err.message || '发送失败，请稍后重试');
+    } finally {
+      $('send').disabled = false;
+    }
+  };
+
+  poll(true);
+  setInterval(() => poll(false), 3000);
+})();
+</script>
+</body>
+</html>
